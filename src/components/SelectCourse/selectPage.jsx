@@ -1,5 +1,31 @@
 import React, { useMemo, useState } from "react";
-import "./select.css";
+import "../../styles/select.css";
+
+/**
+ * 데이터 연동/구조 안내 (설계 주석)
+ *
+ * 1) 과목별 문제 JSON 구조 예시 (subject -> difficulty -> problems)
+ *    - 실제로는 public 폴더 또는 API에서 가져옵니다.
+ *    - 예: /data/problems/os.json, /data/problems/ds.json, /data/problems/web.json
+ *    {
+ *      "subject": "os",                     // 과목 키 (os | ds | web)
+ *      "difficulties": {
+ *        "초급": [{ id: 1, type: "mcq", question: "...", options: [...], answer: 2 }],
+ *        "중급": [{ id: 10, ... }],
+ *        "고급": [{ id: 20, ... }]
+ *      }
+ *    }
+ *
+ * 2) 선택 로직
+ *    - 과목(subject)과 난이도(difficulty) 선택 시 해당 JSON을 로드하고, 난이도에 맞는 문제 리스트를 준비합니다.
+ *    - 퀴즈 모드(quiz): 한 문제씩 즉시 채점 UI로 이동
+ *    - 시험 모드(exam): 전체 문제를 한 번에 풀고 제출, 타이머(학습 시간 설정) 적용
+ *
+ * 3) API/라우팅 예시 (추후 구현)
+ *    - GET /api/problems?subject=os&difficulty=중급
+ *    - navigate('/quiz',   { state: { problems, subject, difficulty } })
+ *    - navigate('/exam',   { state: { problems, subject, difficulty, timeLimitMin } })
+ */
 
 /**
  * 학습 과목 선택 페이지 (단독 파일 버전)
@@ -24,8 +50,38 @@ export default function SelectPage({ onStart }) {
   const [mode, setMode] = useState(null);
   const [studyTime, setStudyTime] = useState(30); // 분 (10~120)
 
+  /**
+   * [추가 예정] 문제 데이터 로딩 가이드
+   * - 과목/난이도 변경될 때마다 문제 세트를 로드하는 흐름입니다.
+   * - 아래 코드는 예시이며, 실제 구현 시 주석 해제 후 API/파일 경로를 맞춰주세요.
+   */
+  // (문제 데이터 로딩) 여기에 추가 (구현방법 : subject/difficulty 의존성 useEffect에서 과목별 JSON fetch →
+  //  difficulty 키로 필터링해 setProblems(list) 수행. public/data/problems/*.json 또는 API 사용)
+  // const [problems, setProblems] = useState([]); // 선택된 문제 리스트
+  // React.useEffect(() => {
+  //   if (!subject) return;
+  //   const urlMap = {
+  //     os:  "/data/problems/os.json",
+  //     ds:  "/data/problems/ds.json",
+  //     web: "/data/problems/web.json",
+  //   };
+  //   fetch(urlMap[subject])
+  //     .then((res) => res.json())
+  //     .then((json) => {
+  //       // json.difficulties["초급" | "중급" | "고급"] 형태라고 가정
+  //       const list = difficulty ? (json.difficulties[difficulty] || []) : [];
+  //       setProblems(list);
+  //     })
+  //     .catch(console.error);
+  // }, [subject, difficulty]);
+
   // 유효성
   const canStart = useMemo(() => {
+    // 시작 가능 조건
+    // - 과목은 항상 필수
+    // - 난이도 섹션이 표시 상태라면 난이도도 필수
+    // - 모드 섹션이 표시 상태라면 모드도 필수
+    // - 시간 섹션은 표시 여부와 무관하게 시작 가능(시험 모드일 때만 활용)
     return !!subject && (!!difficulty || !showDifficulty) && (!!mode || !showMode);
   }, [subject, difficulty, mode, showDifficulty, showMode]);
 
@@ -36,7 +92,26 @@ export default function SelectPage({ onStart }) {
       difficulty: showDifficulty ? difficulty : null,
       mode: showMode ? mode : null,
       studyTimeMin: showTime ? Number(studyTime) : null,
+      // [확장 필드 제안]
+      // problems,            // 위 useEffect로 로딩한 문제 배열
+      // problemCount: problems?.length,
     };
+
+    /**
+     * [시작 동작 가이드]
+     * - 퀴즈 모드(quiz): 즉시 채점형 퀴즈 화면으로 이동
+     *     navigate('/quiz', { state: payload })
+     * - 시험 모드(exam): 타이머 적용 시험 화면으로 이동
+     *     navigate('/exam', { state: { ...payload, timeLimitMin: payload.studyTimeMin } })
+     * - 타이머는 시험 화면에서 카운트다운 훅(useEffect + setInterval)으로 구현
+     *     1) 종료 시 자동 제출 핸들러 호출
+     *     2) 남은 시간은 전역/페이지 상태로 관리하여 재진입 시 복구 가능
+  *
+  * (시작 네비게이션) 여기에 추가 (구현방법 : 위 navigate 주석을 실제 코드로 적용하고
+  *  App.jsx에 /quiz, /exam 라우트를 개설. quiz는 단건 즉시 채점 흐름, exam은 timeLimitMin으로
+  *  타이머 시작 → 제출 시 일괄 채점 및 결과 페이지 이동)
+     */
+
     if (typeof onStart === "function") onStart(payload);
     else console.log("START:", payload);
   };
@@ -85,6 +160,9 @@ export default function SelectPage({ onStart }) {
               <h3 className="block-title">과목 선택</h3>
             </div>
             <div className="card-grid">
+              {/* (과목 선택 처리) 여기에 추가 (구현방법 : 과목 카드 클릭 시 setSubject('os'|'ds'|'web');
+                  이후 위 useEffect에서 해당 과목 JSON을 가져와 난이도 선택값이 있으면
+                  json.difficulties[difficulty]로 필터링하여 setProblems(list) 실행) */}
               <SubjectCard
                 active={subject === "os"}
                 color="blue"
@@ -114,6 +192,8 @@ export default function SelectPage({ onStart }) {
             </div>
             {showDifficulty && (
               <div className="pill-grid">
+                {/* (난이도 선택 처리) 여기에 추가 (구현방법 : setDifficulty('초급'|'중급'|'고급') 호출 후
+                    메모된 과목 데이터 또는 fetch 결과에서 해당 난이도 배열만 골라 setProblems(list)) */}
                 <Pill
                   active={difficulty === "초급"}
                   onClick={() => setDifficulty("초급")}
@@ -144,6 +224,8 @@ export default function SelectPage({ onStart }) {
             </div>
             {showMode && (
               <div className="mode-grid">
+                {/* (모드 선택 처리) 여기에 추가 (구현방법 : setMode('quiz'|'exam') 선택값 저장 →
+                    handleStart에서 mode 값에 따라 navigate('/quiz'|'/exam', { state: payload })로 분기) */}
                 <ModeCard
                   active={mode === "quiz"}
                   highlight
@@ -173,6 +255,9 @@ export default function SelectPage({ onStart }) {
                   <span className="time-label">학습 시간</span>
                   <span className="time-value">{studyTime}분</span>
                 </div>
+                {/* (시험 시간 적용) 여기에 추가 (구현방법 : exam 모드에서만 의미 있게 사용.
+                    handleStart에서 payload.studyTimeMin으로 넘긴 뒤 /exam 페이지에서
+                    useEffect+setInterval로 카운트다운을 구현하고 0이 되면 자동 제출) */}
                 <input
                   type="range"
                   min={10}
